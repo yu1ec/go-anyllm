@@ -322,6 +322,20 @@ func (p *DeepSeekProvider) convertToOpenAIResponse(resp *response.ChatCompletion
 				Content:          choice.Delta.Content,
 				ReasoningContent: choice.Delta.ReasoningContent,
 			}
+
+			// 转换Delta中的工具调用
+			if len(choice.Delta.ToolCalls) > 0 {
+				for _, tc := range choice.Delta.ToolCalls {
+					openaiChoice.Delta.ToolCalls = append(openaiChoice.Delta.ToolCalls, types.ToolCall{
+						ID:   tc.Id,
+						Type: tc.Type,
+						Function: types.ToolFunction{
+							Name:       tc.Function.Name,
+							Parameters: tc.Function.Arguments,
+						},
+					})
+				}
+			}
 		}
 
 		openaiResp.Choices = append(openaiResp.Choices, openaiChoice)

@@ -107,10 +107,17 @@ func handleToolCalls(stream response.StreamReader) error {
                     fmt.Print(choice.Delta.Content)
                 }
                 
-                // 处理工具调用
+                // 处理工具调用（流式响应中的增量工具调用）
                 if len(choice.Delta.ToolCalls) > 0 {
                     for _, toolCall := range choice.Delta.ToolCalls {
                         fmt.Printf("工具调用: %s\n", toolCall.Function.Name)
+                    }
+                }
+                
+                // 处理完整的工具调用信息（通常在Message中）
+                if choice.Message != nil && len(choice.Message.ToolCalls) > 0 {
+                    for _, toolCall := range choice.Message.ToolCalls {
+                        fmt.Printf("完整工具调用: %s\n", toolCall.Function.Name)
                     }
                 }
             }

@@ -3,8 +3,12 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
+	"sync"
+	"time"
 
 	"github.com/yu1ec/go-anyllm/request"
+	"github.com/yu1ec/go-anyllm/response"
 	"github.com/yu1ec/go-anyllm/types"
 )
 
@@ -318,6 +322,221 @@ func ParseToolCallArguments[T any](toolCall types.ToolCall) (T, error) {
 	}
 
 	return result, nil
+}
+
+// ParseToolCallArgumentsSafe 安全解析工具调用参数（支持流式JSON）
+func ParseToolCallArgumentsSafe[T any](toolCall types.ToolCall) (T, bool, error) {
+	var result T
+
+	// 尝试解析Parameters字段
+	switch params := toolCall.Function.Parameters.(type) {
+	case string:
+		// 检查JSON是否完整
+		if !IsValidJSON(params) {
+			return result, false, nil // 返回false表示JSON不完整，需要继续累积
+		}
+		// 如果是字符串，尝试JSON解析
+		if err := json.Unmarshal([]byte(params), &result); err != nil {
+			return result, false, fmt.Errorf("failed to parse tool call arguments from string: %w", err)
+		}
+		return result, true, nil
+	case []byte:
+		// 检查JSON是否完整
+		if !IsValidJSON(string(params)) {
+			return result, false, nil
+		}
+		// 如果是字节数组，尝试JSON解析
+		if err := json.Unmarshal(params, &result); err != nil {
+			return result, false, fmt.Errorf("failed to parse tool call arguments from bytes: %w", err)
+		}
+		return result, true, nil
+	default:
+		// 如果是其他类型，先序列化再反序列化
+		data, err := json.Marshal(params)
+		if err != nil {
+			return result, false, fmt.Errorf("failed to marshal tool call parameters: %w", err)
+		}
+		if !IsValidJSON(string(data)) {
+			return result, false, nil
+		}
+		if err := json.Unmarshal(data, &result); err != nil {
+			return result, false, fmt.Errorf("failed to parse tool call arguments: %w", err)
+		}
+		return result, true, nil
+	}
+}
+
+// IsValidJSON 检查字符串是否为有效的JSON
+func IsValidJSON(s string) bool {
+	if s == "" {
+		return false
+	}
+
+	var js interface{}
+	err := json.Unmarshal([]byte(s), &js)
+	return err == nil
+}
+
+// StreamingToolCallAccumulator 流式工具调用累积器
+type StreamingToolCallAccumulator struct {
+	toolCalls map[string]*StreamingToolCall
+	mutex     sync.RWMutex
+}
+
+// StreamingToolCall 流式工具调用状态
+type StreamingToolCall struct {
+	ID              string
+	Type            string
+	FunctionName    string
+	ArgumentsBuffer strings.Builder
+	IsComplete      bool
+	LastUpdateTime  time.Time
+}
+
+// NewStreamingToolCallAccumulator 创建新的流式工具调用累积器
+func NewStreamingToolCallAccumulator() *StreamingToolCallAccumulator {
+	return &StreamingToolCallAccumulator{
+		toolCalls: make(map[string]*StreamingToolCall),
+	}
+}
+
+// ProcessDelta 处理Delta中的工具调用
+func (acc *StreamingToolCallAccumulator) ProcessDelta(deltaToolCalls []*response.ToolCall) {
+	acc.mutex.Lock()
+	defer acc.mutex.Unlock()
+
+	for _, delta := range deltaToolCalls {
+		if delta.Id == "" {
+			continue
+		}
+
+		// 获取或创建工具调用
+		if acc.toolCalls[delta.Id] == nil {
+			acc.toolCalls[delta.Id] = &StreamingToolCall{
+				ID:             delta.Id,
+				Type:           delta.Type,
+				FunctionName:   delta.Function.Name,
+				LastUpdateTime: time.Now(),
+			}
+		}
+
+		streamingCall := acc.toolCalls[delta.Id]
+		streamingCall.LastUpdateTime = time.Now()
+
+		// 更新函数名（如果有）
+		if delta.Function.Name != "" {
+			streamingCall.FunctionName = delta.Function.Name
+		}
+
+		// 累积参数
+		if delta.Function.Arguments != "" {
+			streamingCall.ArgumentsBuffer.WriteString(delta.Function.Arguments)
+		}
+
+		// 检查JSON是否完整
+		currentArgs := streamingCall.ArgumentsBuffer.String()
+		if IsValidJSON(currentArgs) {
+			streamingCall.IsComplete = true
+		}
+	}
+}
+
+// GetCompletedToolCalls 获取已完成的工具调用
+func (acc *StreamingToolCallAccumulator) GetCompletedToolCalls() []types.ToolCall {
+	acc.mutex.RLock()
+	defer acc.mutex.RUnlock()
+
+	var completed []types.ToolCall
+	for _, streamingCall := range acc.toolCalls {
+		if streamingCall.IsComplete {
+			completed = append(completed, types.ToolCall{
+				ID:   streamingCall.ID,
+				Type: streamingCall.Type,
+				Function: types.ToolFunction{
+					Name:       streamingCall.FunctionName,
+					Parameters: streamingCall.ArgumentsBuffer.String(),
+				},
+			})
+		}
+	}
+
+	return completed
+}
+
+// GetPendingToolCalls 获取待完成的工具调用（用于调试）
+func (acc *StreamingToolCallAccumulator) GetPendingToolCalls() map[string]string {
+	acc.mutex.RLock()
+	defer acc.mutex.RUnlock()
+
+	pending := make(map[string]string)
+	for id, streamingCall := range acc.toolCalls {
+		if !streamingCall.IsComplete {
+			pending[id] = streamingCall.ArgumentsBuffer.String()
+		}
+	}
+
+	return pending
+}
+
+// ClearCompleted 清除已完成的工具调用
+func (acc *StreamingToolCallAccumulator) ClearCompleted() {
+	acc.mutex.Lock()
+	defer acc.mutex.Unlock()
+
+	for id, streamingCall := range acc.toolCalls {
+		if streamingCall.IsComplete {
+			delete(acc.toolCalls, id)
+		}
+	}
+}
+
+// HasPendingToolCalls 检查是否有待完成的工具调用
+func (acc *StreamingToolCallAccumulator) HasPendingToolCalls() bool {
+	acc.mutex.RLock()
+	defer acc.mutex.RUnlock()
+
+	for _, streamingCall := range acc.toolCalls {
+		if !streamingCall.IsComplete {
+			return true
+		}
+	}
+	return false
+}
+
+// GetPendingCount 获取待完成的工具调用数量
+func (acc *StreamingToolCallAccumulator) GetPendingCount() int {
+	acc.mutex.RLock()
+	defer acc.mutex.RUnlock()
+
+	count := 0
+	for _, streamingCall := range acc.toolCalls {
+		if !streamingCall.IsComplete {
+			count++
+		}
+	}
+	return count
+}
+
+// GetCompletedCount 获取已完成的工具调用数量
+func (acc *StreamingToolCallAccumulator) GetCompletedCount() int {
+	acc.mutex.RLock()
+	defer acc.mutex.RUnlock()
+
+	count := 0
+	for _, streamingCall := range acc.toolCalls {
+		if streamingCall.IsComplete {
+			count++
+		}
+	}
+	return count
+}
+
+// GetTotalCount 获取总工具调用数量
+func (acc *StreamingToolCallAccumulator) GetTotalCount() int {
+	acc.mutex.RLock()
+	defer acc.mutex.RUnlock()
+
+	return len(acc.toolCalls)
 }
 
 // 常用工具定义的预设模板

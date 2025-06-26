@@ -38,8 +38,9 @@ type ToolFunction struct {
 }
 
 type Delta struct {
-	Content          string `json:"content"`
-	ReasoningContent string `json:"reasoning_content"`
+	Content          string      `json:"content"`
+	ReasoningContent string      `json:"reasoning_content"`
+	ToolCalls        []*ToolCall `json:"tool_calls,omitempty"`
 }
 
 type Usage struct {
