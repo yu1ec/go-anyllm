@@ -539,6 +539,92 @@ func (acc *StreamingToolCallAccumulator) GetTotalCount() int {
 	return len(acc.toolCalls)
 }
 
+// FinalizeStream 在流结束时强制检查所有累积的工具调用，将有效JSON标记为完成
+func (acc *StreamingToolCallAccumulator) FinalizeStream() []types.ToolCall {
+	acc.mutex.Lock()
+	defer acc.mutex.Unlock()
+
+	// 遍历所有待完成的工具调用
+	for _, streamingCall := range acc.toolCalls {
+		if !streamingCall.IsComplete {
+			currentArgs := streamingCall.ArgumentsBuffer.String()
+			// 强制检查JSON是否有效
+			if IsValidJSON(currentArgs) {
+				streamingCall.IsComplete = true
+			}
+		}
+	}
+
+	// 返回所有已完成的工具调用
+	var completed []types.ToolCall
+	for _, streamingCall := range acc.toolCalls {
+		if streamingCall.IsComplete {
+			completed = append(completed, types.ToolCall{
+				ID:   streamingCall.ID,
+				Type: streamingCall.Type,
+				Function: types.ToolFunction{
+					Name:       streamingCall.FunctionName,
+					Parameters: streamingCall.ArgumentsBuffer.String(),
+				},
+			})
+		}
+	}
+
+	return completed
+}
+
+// ForceCompleteToolCall 强制完成指定ID的工具调用（用于调试或特殊情况）
+func (acc *StreamingToolCallAccumulator) ForceCompleteToolCall(toolCallId string) *types.ToolCall {
+	acc.mutex.Lock()
+	defer acc.mutex.Unlock()
+
+	// 查找指定ID的工具调用
+	streamingCall, exists := acc.toolCalls[toolCallId]
+	if !exists {
+		return nil
+	}
+
+	// 强制标记为完成
+	streamingCall.IsComplete = true
+	streamingCall.LastUpdateTime = time.Now()
+
+	// 构建并返回工具调用对象
+	toolCall := &types.ToolCall{
+		ID:   streamingCall.ID,
+		Type: streamingCall.Type,
+		Function: types.ToolFunction{
+			Name:       streamingCall.FunctionName,
+			Parameters: streamingCall.ArgumentsBuffer.String(),
+		},
+	}
+
+	return toolCall
+}
+
+// GetPendingToolCallsDebugInfo 返回当前待处理工具调用的详细信息，用于调试
+func (acc *StreamingToolCallAccumulator) GetPendingToolCallsDebugInfo() map[string]string {
+	acc.mutex.RLock()
+	defer acc.mutex.RUnlock()
+
+	debugInfo := make(map[string]string)
+
+	for id, streamingCall := range acc.toolCalls {
+		if !streamingCall.IsComplete {
+			currentArgs := streamingCall.ArgumentsBuffer.String()
+			info := fmt.Sprintf("Function: %s | Type: %s | Args Length: %d | Last Update: %s | Args Content: %s | Is Valid JSON: %t",
+				streamingCall.FunctionName,
+				streamingCall.Type,
+				len(currentArgs),
+				streamingCall.LastUpdateTime.Format("15:04:05.000"),
+				currentArgs,
+				IsValidJSON(currentArgs))
+			debugInfo[id] = info
+		}
+	}
+
+	return debugInfo
+}
+
 // 常用工具定义的预设模板
 
 // GetWeatherTool 获取天气信息的工具
