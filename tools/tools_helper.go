@@ -379,8 +379,9 @@ func IsValidJSON(s string) bool {
 
 // StreamingToolCallAccumulator 流式工具调用累积器
 type StreamingToolCallAccumulator struct {
-	toolCalls map[string]*StreamingToolCall
-	mutex     sync.RWMutex
+	toolCalls      map[string]*StreamingToolCall
+	lastToolCallID string // 最近处理的工具调用ID，用于处理ID为空的Delta
+	mutex          sync.RWMutex
 }
 
 // StreamingToolCall 流式工具调用状态
@@ -406,22 +407,37 @@ func (acc *StreamingToolCallAccumulator) ProcessDelta(deltaToolCalls []*response
 	defer acc.mutex.Unlock()
 
 	for _, delta := range deltaToolCalls {
+		var targetID string
+
+		// 处理ID为空的情况：关联到最近的工具调用
 		if delta.Id == "" {
-			continue
+			if acc.lastToolCallID == "" {
+				// 如果没有之前的工具调用ID，跳过这个Delta
+				continue
+			}
+			targetID = acc.lastToolCallID
+		} else {
+			targetID = delta.Id
+			acc.lastToolCallID = targetID // 更新最近的工具调用ID
 		}
 
 		// 获取或创建工具调用
-		if acc.toolCalls[delta.Id] == nil {
-			acc.toolCalls[delta.Id] = &StreamingToolCall{
-				ID:             delta.Id,
+		if acc.toolCalls[targetID] == nil {
+			acc.toolCalls[targetID] = &StreamingToolCall{
+				ID:             targetID,
 				Type:           delta.Type,
 				FunctionName:   delta.Function.Name,
 				LastUpdateTime: time.Now(),
 			}
 		}
 
-		streamingCall := acc.toolCalls[delta.Id]
+		streamingCall := acc.toolCalls[targetID]
 		streamingCall.LastUpdateTime = time.Now()
+
+		// 更新类型（如果有）
+		if delta.Type != "" {
+			streamingCall.Type = delta.Type
+		}
 
 		// 更新函数名（如果有）
 		if delta.Function.Name != "" {
@@ -623,48 +639,4 @@ func (acc *StreamingToolCallAccumulator) GetPendingToolCallsDebugInfo() map[stri
 	}
 
 	return debugInfo
-}
-
-// 常用工具定义的预设模板
-
-// GetWeatherTool 获取天气信息的工具
-func GetWeatherTool() types.Tool {
-	return NewTool("get_weather", "获取指定地点的天气信息").
-		AddStringParam("location", "城市和州，例如：北京, 中国", true).
-		AddStringParam("unit", "温度单位", false, "celsius", "fahrenheit").
-		BuildForTypes()
-}
-
-// CalculatorTool 计算器工具
-func CalculatorTool() types.Tool {
-	return NewTool("calculator", "执行数学计算").
-		AddStringParam("expression", "要计算的数学表达式，例如：2+3*4", true).
-		BuildForTypes()
-}
-
-// SearchTool 搜索工具
-func SearchTool() types.Tool {
-	return NewTool("search", "在互联网上搜索信息").
-		AddStringParam("query", "搜索查询词", true).
-		AddIntegerParam("max_results", "最大结果数量", false).
-		BuildForTypes()
-}
-
-// SendEmailTool 发送邮件工具
-func SendEmailTool() types.Tool {
-	return NewTool("send_email", "发送电子邮件").
-		AddStringParam("to", "收件人邮箱地址", true).
-		AddStringParam("subject", "邮件主题", true).
-		AddStringParam("body", "邮件正文", true).
-		AddStringParam("cc", "抄送邮箱地址", false).
-		BuildForTypes()
-}
-
-// FileOperationTool 文件操作工具
-func FileOperationTool() types.Tool {
-	return NewTool("file_operation", "执行文件操作").
-		AddStringParam("operation", "操作类型", true, "read", "write", "delete", "list").
-		AddStringParam("path", "文件路径", true).
-		AddStringParam("content", "文件内容（仅用于写入操作）", false).
-		BuildForTypes()
 }
