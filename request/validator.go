@@ -53,8 +53,16 @@ func ValidateChatCompletionsRequest(req *ChatCompletionsRequest) error {
 		return err
 	}
 
-	// TODO: VN -- tools validation
-	// TODO: VN -- tool_choice validation
+	// 验证工具
+	if err := validateTools(req); err != nil {
+		return err
+	}
+
+	// 验证工具选择
+	if err := validateToolChoice(req); err != nil {
+		return err
+	}
+
 	if req.TopLogprobs != nil {
 		if !req.Logprobs {
 			return fmt.Errorf(`err: top_logprobs can not be set when "logprobs" is false`)
@@ -140,5 +148,124 @@ func validateStreamOptions(req *ChatCompletionsRequest) error {
 			return errors.New(`err: stream_options should be set along with stream = true`)
 		}
 	}
+	return nil
+}
+
+// validateTools 验证工具定义
+func validateTools(req *ChatCompletionsRequest) error {
+	if req.Tools == nil {
+		return nil
+	}
+
+	for i, tool := range *req.Tools {
+		if tool.Type == "" {
+			return fmt.Errorf("err: tool type is blank for tool at %d index", i)
+		}
+		if tool.Type != "function" {
+			return fmt.Errorf("err: invalid tool type %q for tool at %d index; type must be 'function'", tool.Type, i)
+		}
+		if tool.Function == nil {
+			return fmt.Errorf("err: function is nil for tool at %d index", i)
+		}
+		if tool.Function.Name == "" {
+			return fmt.Errorf("err: function name is blank for tool at %d index", i)
+		}
+		// 验证函数名称格式（只允许字母、数字、下划线和连字符，长度1-64）
+		if len(tool.Function.Name) > 64 {
+			return fmt.Errorf("err: function name too long for tool at %d index; max length is 64", i)
+		}
+		for _, char := range tool.Function.Name {
+			if !((char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+				(char >= '0' && char <= '9') || char == '_' || char == '-') {
+				return fmt.Errorf("err: invalid character in function name for tool at %d index; only letters, numbers, underscore and hyphen allowed", i)
+			}
+		}
+	}
+	return nil
+}
+
+// validateToolChoice 验证工具选择
+func validateToolChoice(req *ChatCompletionsRequest) error {
+	if req.ToolChoice == nil {
+		return nil
+	}
+
+	// 如果设置了tool_choice，必须同时设置tools
+	if req.Tools == nil || len(*req.Tools) == 0 {
+		return errors.New("err: tool_choice can only be set when tools are provided")
+	}
+
+	// 检查tool_choice的类型
+	switch choice := req.ToolChoice.(type) {
+	case string:
+		// 支持的字符串值："none", "auto", "required"
+		if choice != "none" && choice != "auto" && choice != "required" {
+			return fmt.Errorf("err: invalid tool_choice string %q; must be one of 'none', 'auto', 'required'", choice)
+		}
+	case map[string]interface{}:
+		// 检查是否为命名工具选择格式
+		toolType, hasType := choice["type"]
+		if !hasType {
+			return errors.New("err: tool_choice object must have 'type' field")
+		}
+		if toolType != "function" {
+			return fmt.Errorf("err: invalid tool_choice type %q; must be 'function'", toolType)
+		}
+
+		functionField, hasFunction := choice["function"]
+		if !hasFunction {
+			return errors.New("err: tool_choice object must have 'function' field when type is 'function'")
+		}
+
+		function, ok := functionField.(map[string]interface{})
+		if !ok {
+			return errors.New("err: tool_choice 'function' field must be an object")
+		}
+
+		functionName, hasName := function["name"]
+		if !hasName {
+			return errors.New("err: tool_choice function must have 'name' field")
+		}
+
+		name, ok := functionName.(string)
+		if !ok {
+			return errors.New("err: tool_choice function name must be a string")
+		}
+
+		// 验证指定的函数名是否存在于tools中
+		found := false
+		for _, tool := range *req.Tools {
+			if tool.Function != nil && tool.Function.Name == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("err: tool_choice function %q not found in provided tools", name)
+		}
+	case ToolChoiceNamed:
+		// 处理结构体类型的工具选择
+		if choice.Type != "function" {
+			return fmt.Errorf("err: invalid tool_choice type %q; must be 'function'", choice.Type)
+		}
+		if choice.Function.Name == "" {
+			return errors.New("err: tool_choice function name cannot be empty")
+		}
+
+		// 验证指定的函数名是否存在于tools中
+		found := false
+		for _, tool := range *req.Tools {
+			if tool.Function != nil && tool.Function.Name == choice.Function.Name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("err: tool_choice function %q not found in provided tools", choice.Function.Name)
+		}
+	default:
+		return errors.New("err: tool_choice must be a string, object, or ToolChoiceNamed struct")
+	}
+
 	return nil
 }
