@@ -233,6 +233,33 @@ type ToolCallHandler interface {
 	HandleToolCall(toolCall types.ToolCall) (string, error)
 }
 
+// StreamingToolCallHandler 流式工具调用处理器接口
+type StreamingToolCallHandler interface {
+	HandleToolCallStream(toolCall types.ToolCall) (<-chan StreamChunk, error)
+}
+
+// UnifiedToolCallHandler 统一工具调用处理器接口（同时支持同步和流式）
+type UnifiedToolCallHandler interface {
+	ToolCallHandler
+	StreamingToolCallHandler
+}
+
+// StreamChunk 流式响应块
+type StreamChunk struct {
+	Content string `json:"content"`
+	Done    bool   `json:"done"`
+	Error   error  `json:"error,omitempty"`
+}
+
+// OptionalStreamingHandler 可选流式处理器（提供默认流式实现）
+type OptionalStreamingHandler interface {
+	ToolCallHandler
+	// CanStream 检查是否支持流式处理
+	CanStream() bool
+	// HandleToolCallStream 可选的流式处理方法
+	HandleToolCallStream(toolCall types.ToolCall) (<-chan StreamChunk, error)
+}
+
 // ToolCallResult 工具调用结果
 type ToolCallResult struct {
 	ToolCallID string `json:"tool_call_id"`
@@ -257,6 +284,16 @@ func (fr *FunctionRegistry) Register(functionName string, handler ToolCallHandle
 	fr.handlers[functionName] = handler
 }
 
+// RegisterStreaming 注册流式工具处理器
+func (fr *FunctionRegistry) RegisterStreaming(functionName string, handler StreamingToolCallHandler) {
+	fr.handlers[functionName] = &streamingToSyncAdapter{handler}
+}
+
+// RegisterUnified 注册统一工具处理器（同时支持同步和流式）
+func (fr *FunctionRegistry) RegisterUnified(functionName string, handler UnifiedToolCallHandler) {
+	fr.handlers[functionName] = handler
+}
+
 // Handle 处理工具调用
 func (fr *FunctionRegistry) Handle(toolCall types.ToolCall) *ToolCallResult {
 	handler, exists := fr.handlers[toolCall.Function.Name]
@@ -278,6 +315,101 @@ func (fr *FunctionRegistry) Handle(toolCall types.ToolCall) *ToolCallResult {
 	}
 
 	return result
+}
+
+// HandleStreaming 处理流式工具调用
+func (fr *FunctionRegistry) HandleStreaming(toolCall types.ToolCall) (<-chan StreamChunk, error) {
+	handler, exists := fr.handlers[toolCall.Function.Name]
+	if !exists {
+		errChan := make(chan StreamChunk, 1)
+		errChan <- StreamChunk{
+			Error: fmt.Errorf("function %s not found", toolCall.Function.Name),
+			Done:  true,
+		}
+		close(errChan)
+		return errChan, nil
+	}
+
+	// 检查处理器类型
+	switch h := handler.(type) {
+	case StreamingToolCallHandler:
+		return h.HandleToolCallStream(toolCall)
+	case UnifiedToolCallHandler:
+		return h.HandleToolCallStream(toolCall)
+	case OptionalStreamingHandler:
+		if h.CanStream() {
+			return h.HandleToolCallStream(toolCall)
+		}
+		// 如果不支持流式，将同步结果转换为流式
+		return fr.syncToStream(h, toolCall), nil
+	default:
+		// 对于普通的 ToolCallHandler，将同步结果转换为流式
+		return fr.syncToStream(handler, toolCall), nil
+	}
+}
+
+// CanHandleStreaming 检查指定函数是否支持流式处理
+func (fr *FunctionRegistry) CanHandleStreaming(functionName string) bool {
+	handler, exists := fr.handlers[functionName]
+	if !exists {
+		return false
+	}
+
+	switch h := handler.(type) {
+	case StreamingToolCallHandler, UnifiedToolCallHandler:
+		return true
+	case OptionalStreamingHandler:
+		return h.CanStream()
+	default:
+		return false // 普通 ToolCallHandler 不支持原生流式
+	}
+}
+
+// syncToStream 将同步处理结果转换为流式
+func (fr *FunctionRegistry) syncToStream(handler ToolCallHandler, toolCall types.ToolCall) <-chan StreamChunk {
+	resultChan := make(chan StreamChunk, 2)
+
+	go func() {
+		defer close(resultChan)
+
+		content, err := handler.HandleToolCall(toolCall)
+		if err != nil {
+			resultChan <- StreamChunk{
+				Error: err,
+				Done:  true,
+			}
+			return
+		}
+
+		resultChan <- StreamChunk{
+			Content: content,
+			Done:    true,
+		}
+	}()
+
+	return resultChan
+}
+
+// streamingToSyncAdapter 流式到同步的适配器
+type streamingToSyncAdapter struct {
+	StreamingToolCallHandler
+}
+
+func (adapter *streamingToSyncAdapter) HandleToolCall(toolCall types.ToolCall) (string, error) {
+	streamChan, err := adapter.HandleToolCallStream(toolCall)
+	if err != nil {
+		return "", err
+	}
+
+	var result strings.Builder
+	for chunk := range streamChan {
+		if chunk.Error != nil {
+			return result.String(), chunk.Error
+		}
+		result.WriteString(chunk.Content)
+	}
+
+	return result.String(), nil
 }
 
 // ToToolMessage 将工具调用结果转换为消息
