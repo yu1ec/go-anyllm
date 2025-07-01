@@ -30,14 +30,27 @@ type ChatCompletionRequest struct {
 
 // ChatCompletionMessage 聊天消息
 type ChatCompletionMessage struct {
-	Role       string     `json:"role"`
-	Content    string     `json:"content,omitempty"`
-	Name       string     `json:"name,omitempty"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
+	Role       string      `json:"role"`
+	Content    interface{} `json:"content,omitempty"` // 支持string或[]MessageContent
+	Name       string      `json:"name,omitempty"`
+	ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`
+	ToolCallID string      `json:"tool_call_id,omitempty"`
 
 	// DeepSeek特有字段
 	ReasoningContent string `json:"reasoning_content,omitempty"`
+}
+
+// MessageContent 消息内容项，支持文本和图像
+type MessageContent struct {
+	Type     string    `json:"type"`                // "text" 或 "image_url"
+	Text     string    `json:"text,omitempty"`      // 文本内容
+	ImageURL *ImageURL `json:"image_url,omitempty"` // 图像URL
+}
+
+// ImageURL 图像URL结构
+type ImageURL struct {
+	URL    string `json:"url"`              // 图像URL或base64数据
+	Detail string `json:"detail,omitempty"` // "low", "high", "auto"
 }
 
 // ChatCompletionResponse OpenAI兼容的聊天完成响应
@@ -199,10 +212,108 @@ func (r *ChatCompletionRequest) IsThinkingEnabled() bool {
 	return r.EnableThinking != nil && *r.EnableThinking
 }
 
-// GetThinkingBudget 获取思考预算，如果未设置返回0
+// GetThinkingBudget 获取思考预算
 func (r *ChatCompletionRequest) GetThinkingBudget() int {
-	if r.ThinkingBudget == nil {
-		return 0
+	if r.ThinkingBudget != nil {
+		return *r.ThinkingBudget
 	}
-	return *r.ThinkingBudget
+	return 0
+}
+
+// 多模态内容类型常量
+const (
+	MessageContentTypeText     = "text"
+	MessageContentTypeImageURL = "image_url"
+)
+
+// 图像详细度常量
+const (
+	ImageDetailLow  = "low"
+	ImageDetailHigh = "high"
+	ImageDetailAuto = "auto"
+)
+
+// 多模态消息辅助函数
+
+// NewTextMessage 创建文本消息
+func NewTextMessage(role, content string) ChatCompletionMessage {
+	return ChatCompletionMessage{
+		Role:    role,
+		Content: content,
+	}
+}
+
+// NewMultiModalMessage 创建多模态消息
+func NewMultiModalMessage(role string, contents []MessageContent) ChatCompletionMessage {
+	return ChatCompletionMessage{
+		Role:    role,
+		Content: contents,
+	}
+}
+
+// NewTextContent 创建文本内容
+func NewTextContent(text string) MessageContent {
+	return MessageContent{
+		Type: MessageContentTypeText,
+		Text: text,
+	}
+}
+
+// NewImageContent 创建图像内容
+func NewImageContent(imageURL string, detail ...string) MessageContent {
+	imgURL := &ImageURL{URL: imageURL}
+	if len(detail) > 0 {
+		imgURL.Detail = detail[0]
+	}
+	return MessageContent{
+		Type:     MessageContentTypeImageURL,
+		ImageURL: imgURL,
+	}
+}
+
+// GetContentAsString 获取消息内容的字符串表示
+func (m *ChatCompletionMessage) GetContentAsString() string {
+	switch content := m.Content.(type) {
+	case string:
+		return content
+	case []MessageContent:
+		// 只返回文本内容，忽略图像
+		var textParts []string
+		for _, part := range content {
+			if part.Type == MessageContentTypeText {
+				textParts = append(textParts, part.Text)
+			}
+		}
+		if len(textParts) > 0 {
+			return textParts[0] // 返回第一个文本部分
+		}
+		return ""
+	default:
+		return ""
+	}
+}
+
+// IsMultiModal 检查消息是否包含多模态内容
+func (m *ChatCompletionMessage) IsMultiModal() bool {
+	if contents, ok := m.Content.([]MessageContent); ok {
+		for _, content := range contents {
+			if content.Type == MessageContentTypeImageURL {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// GetImageContents 获取消息中的所有图像内容
+func (m *ChatCompletionMessage) GetImageContents() []MessageContent {
+	var images []MessageContent
+	if contents, ok := m.Content.([]MessageContent); ok {
+		for _, content := range contents {
+			if content.Type == MessageContentTypeImageURL {
+				images = append(images, content)
+			}
+		}
+	}
+	return images
 }

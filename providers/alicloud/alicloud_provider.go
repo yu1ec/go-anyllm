@@ -272,14 +272,15 @@ func (p *AliCloudProvider) readStreamWithTimeout(ctx context.Context, stream io.
 				choice := chunk.Choices[0]
 
 				// 检测阶段切换：从思考到输出
-				if isThinkingPhase && choice.Delta.Content != "" {
+				deltaContent := getContentAsString(choice.Delta.Content)
+				if isThinkingPhase && deltaContent != "" {
 					isThinkingPhase = false
 					lastDataTime = now // 重置输出阶段计时
 				}
 
 				// 聚合内容
-				if choice.Delta.Content != "" {
-					contentBuilder.WriteString(choice.Delta.Content)
+				if deltaContent != "" {
+					contentBuilder.WriteString(deltaContent)
 				}
 
 				// 聚合思考内容
@@ -526,8 +527,8 @@ type AliCloudInput struct {
 
 // AliCloudMessage 阿里云消息格式
 type AliCloudMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role    string      `json:"role"`
+	Content interface{} `json:"content"` // 支持string或多模态内容数组
 }
 
 // AliCloudParameters 阿里云参数格式
@@ -645,5 +646,23 @@ func (p *AliCloudProvider) convertFinishReason(reason string) string {
 		return types.FinishReasonLength
 	default:
 		return reason
+	}
+}
+
+// getContentAsString 获取内容的字符串表示
+func getContentAsString(content interface{}) string {
+	switch c := content.(type) {
+	case string:
+		return c
+	case []types.MessageContent:
+		// 只返回文本内容，忽略图像
+		for _, part := range c {
+			if part.Type == types.MessageContentTypeText {
+				return part.Text
+			}
+		}
+		return ""
+	default:
+		return ""
 	}
 }

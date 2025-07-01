@@ -221,9 +221,12 @@ func (p *DeepSeekProvider) convertToDeepSeekRequest(req *types.ChatCompletionReq
 
 	// 转换消息
 	for _, msg := range req.Messages {
+		// 获取消息内容的字符串表示
+		contentStr := getContentAsString(msg.Content)
+
 		deepseekMsg := &request.Message{
 			Role:    msg.Role,
-			Content: msg.Content,
+			Content: contentStr,
 			Name:    msg.Name,
 		}
 		if msg.ToolCallID != "" {
@@ -359,4 +362,22 @@ func (p *DeepSeekProvider) convertToOpenAIResponse(resp *response.ChatCompletion
 	}
 
 	return openaiResp
+}
+
+// getContentAsString 获取内容的字符串表示
+func getContentAsString(content interface{}) string {
+	switch c := content.(type) {
+	case string:
+		return c
+	case []types.MessageContent:
+		// 只返回文本内容，忽略图像
+		for _, part := range c {
+			if part.Type == types.MessageContentTypeText {
+				return part.Text
+			}
+		}
+		return ""
+	default:
+		return ""
+	}
 }
