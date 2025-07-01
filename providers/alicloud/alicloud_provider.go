@@ -1,12 +1,14 @@
 package alicloud
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/yu1ec/go-anyllm/providers"
@@ -32,6 +34,11 @@ type AliCloudConfig struct {
 	BaseURL      string
 	Timeout      int
 	ExtraHeaders map[string]string
+
+	// 思考模式超时配置 (秒)
+	ThinkingTimeout int // 思考阶段总超时时间，默认300秒(5分钟)
+	OutputTimeout   int // 输出阶段无数据超时时间，默认60秒(1分钟)
+	ReadTimeout     int // 单次读取超时时间，默认30秒
 }
 
 // GetAPIKey 实现ProviderConfig接口
@@ -119,6 +126,13 @@ func (p *AliCloudProvider) SetupHeaders(headers map[string]string) {
 
 // CreateChatCompletion 实现Provider接口
 func (p *AliCloudProvider) CreateChatCompletion(ctx context.Context, req *types.ChatCompletionRequest) (*types.ChatCompletionResponse, error) {
+	// 检查是否开启了思考模式
+	// 根据阿里云文档，思考模式只支持流式输出，所以需要特殊处理
+	if req.EnableThinking != nil && *req.EnableThinking {
+		// 如果开启了思考模式，使用流式调用然后聚合结果
+		return p.handleThinkingModeNonStream(ctx, req)
+	}
+
 	// 兼容模式下直接使用OpenAI格式
 	req.Stream = false
 
@@ -142,6 +156,268 @@ func (p *AliCloudProvider) CreateChatCompletion(ctx context.Context, req *types.
 	}
 
 	return &resp, nil
+}
+
+// handleThinkingModeNonStream 处理思考模式的非流式调用
+// 由于思考模式只支持流式输出，所以我们需要内部使用流式调用然后聚合结果
+func (p *AliCloudProvider) handleThinkingModeNonStream(ctx context.Context, req *types.ChatCompletionRequest) (*types.ChatCompletionResponse, error) {
+	// 创建流式调用
+	stream, err := p.CreateChatCompletionStream(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	defer stream.Close()
+
+	// 使用优化的流式读取器
+	return p.readStreamWithTimeout(ctx, stream)
+}
+
+// readStreamWithTimeout 带超时控制的流式读取器
+func (p *AliCloudProvider) readStreamWithTimeout(ctx context.Context, stream io.ReadCloser) (*types.ChatCompletionResponse, error) {
+	// 读取状态跟踪
+	var response types.ChatCompletionResponse
+	var contentBuilder strings.Builder
+	var reasoningContentBuilder strings.Builder
+
+	isThinkingPhase := true // 是否在思考阶段
+	lastDataTime := time.Now()
+	thinkingStartTime := time.Now()
+
+	// 分阶段超时配置（使用配置值或默认值）
+	thinkingTimeout := time.Duration(p.getThinkingTimeout()) * time.Second
+	outputTimeout := time.Duration(p.getOutputTimeout()) * time.Second
+	readTimeout := time.Duration(p.getReadTimeout()) * time.Second
+
+	// 创建带缓冲的读取器
+	reader := bufio.NewReaderSize(stream, 8192) // 8KB缓冲区
+
+	// 创建定时器
+	readTimer := time.NewTimer(readTimeout)
+	defer readTimer.Stop()
+
+	for {
+		// 检查上下文是否被取消
+		select {
+		case <-ctx.Done():
+			return p.buildPartialResponse(response, contentBuilder, reasoningContentBuilder, "context_cancelled")
+		default:
+		}
+
+		// 检查分阶段超时
+		now := time.Now()
+		if isThinkingPhase {
+			// 思考阶段：检查总思考时间
+			if now.Sub(thinkingStartTime) > thinkingTimeout {
+				return nil, fmt.Errorf("alicloud: thinking timeout after %v", thinkingTimeout)
+			}
+		} else {
+			// 输出阶段：检查最后数据时间
+			if now.Sub(lastDataTime) > outputTimeout {
+				return p.buildPartialResponse(response, contentBuilder, reasoningContentBuilder, "output_timeout")
+			}
+		}
+
+		// 非阻塞读取一行
+		line, err := p.readLineWithTimeout(reader, readTimer, readTimeout)
+		if err != nil {
+			if err == io.EOF {
+				break // 正常结束
+			}
+
+			// 检查是否是超时错误
+			if strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "deadline") {
+				// 尝试返回部分结果而不是完全失败
+				if contentBuilder.Len() > 0 || reasoningContentBuilder.Len() > 0 {
+					return p.buildPartialResponse(response, contentBuilder, reasoningContentBuilder, "timeout_partial")
+				}
+				return nil, fmt.Errorf("alicloud: stream read timeout: %v", err)
+			}
+
+			return nil, fmt.Errorf("alicloud: error reading stream: %v", err)
+		}
+
+		// 更新最后数据接收时间
+		lastDataTime = now
+
+		// 跳过空行和注释
+		if line == "" || strings.HasPrefix(line, ":") {
+			continue
+		}
+
+		// 处理 SSE 格式
+		if strings.HasPrefix(line, "data: ") {
+			data := strings.TrimPrefix(line, "data: ")
+
+			// 检查是否是结束标记
+			if data == "[DONE]" {
+				break
+			}
+
+			// 解析 JSON
+			var chunk types.ChatCompletionStreamResponse
+			if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+				continue // 跳过无法解析的行
+			}
+
+			// 聚合响应信息
+			if response.ID == "" {
+				response.ID = chunk.ID
+				response.Object = "chat.completion"
+				response.Created = chunk.Created
+				response.Model = chunk.Model
+			}
+
+			// 处理选择项
+			if len(chunk.Choices) > 0 {
+				choice := chunk.Choices[0]
+
+				// 检测阶段切换：从思考到输出
+				if isThinkingPhase && choice.Delta.Content != "" {
+					isThinkingPhase = false
+					lastDataTime = now // 重置输出阶段计时
+				}
+
+				// 聚合内容
+				if choice.Delta.Content != "" {
+					contentBuilder.WriteString(choice.Delta.Content)
+				}
+
+				// 聚合思考内容
+				if choice.Delta.ReasoningContent != "" {
+					reasoningContentBuilder.WriteString(choice.Delta.ReasoningContent)
+				}
+
+				// 设置完成原因
+				if choice.FinishReason != "" {
+					if len(response.Choices) == 0 {
+						response.Choices = append(response.Choices, types.ChatCompletionChoice{
+							Index: 0,
+							Message: &types.ChatCompletionMessage{
+								Role: types.RoleAssistant,
+							},
+						})
+					}
+					response.Choices[0].FinishReason = choice.FinishReason
+				}
+			}
+
+			// 处理使用信息
+			if chunk.Usage != nil {
+				response.Usage = chunk.Usage
+			}
+		}
+	}
+
+	return p.buildFinalResponse(response, contentBuilder, reasoningContentBuilder), nil
+}
+
+// readLineWithTimeout 带超时的行读取
+func (p *AliCloudProvider) readLineWithTimeout(reader *bufio.Reader, timer *time.Timer, timeout time.Duration) (string, error) {
+	// 重置定时器
+	timer.Reset(timeout)
+
+	// 使用channel来实现带超时的读取
+	type readResult struct {
+		line string
+		err  error
+	}
+
+	ch := make(chan readResult, 1)
+	go func() {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			ch <- readResult{"", err}
+			return
+		}
+		// 移除行尾的换行符
+		line = strings.TrimSuffix(line, "\n")
+		line = strings.TrimSuffix(line, "\r")
+		ch <- readResult{line, nil}
+	}()
+
+	select {
+	case result := <-ch:
+		return result.line, result.err
+	case <-timer.C:
+		return "", fmt.Errorf("read timeout after %v", timeout)
+	}
+}
+
+// buildPartialResponse 构建部分响应（用于超时恢复）
+func (p *AliCloudProvider) buildPartialResponse(response types.ChatCompletionResponse, contentBuilder, reasoningContentBuilder strings.Builder, reason string) (*types.ChatCompletionResponse, error) {
+	if len(response.Choices) == 0 {
+		response.Choices = append(response.Choices, types.ChatCompletionChoice{
+			Index: 0,
+			Message: &types.ChatCompletionMessage{
+				Role: types.RoleAssistant,
+			},
+		})
+	}
+
+	// 设置部分内容
+	content := contentBuilder.String()
+	if content == "" && reasoningContentBuilder.Len() > 0 {
+		// 如果只有思考内容，提供一个默认回复
+		content = "[思考中断] 由于超时，思考过程未完成。"
+	}
+
+	response.Choices[0].Message.Content = content
+	response.Choices[0].FinishReason = reason
+
+	// 生成默认ID和时间戳（如果没有的话）
+	if response.ID == "" {
+		response.ID = fmt.Sprintf("chatcmpl-partial-%d", time.Now().Unix())
+		response.Object = "chat.completion"
+		response.Created = time.Now().Unix()
+	}
+
+	return &response, nil
+}
+
+// buildFinalResponse 构建最终响应
+func (p *AliCloudProvider) buildFinalResponse(response types.ChatCompletionResponse, contentBuilder, reasoningContentBuilder strings.Builder) *types.ChatCompletionResponse {
+	if len(response.Choices) == 0 {
+		response.Choices = append(response.Choices, types.ChatCompletionChoice{
+			Index: 0,
+			Message: &types.ChatCompletionMessage{
+				Role: types.RoleAssistant,
+			},
+		})
+	}
+
+	// 设置聚合的内容
+	response.Choices[0].Message.Content = contentBuilder.String()
+
+	// 如果有思考内容，可以添加到响应中（这里可以根据需要决定如何处理）
+	if reasoningContentBuilder.Len() > 0 {
+		// 可以将思考内容添加到 content 的开头，或者存储在其他字段中
+		// 这里我们选择不在最终响应中包含思考过程，只返回最终答案
+		// 如果需要包含思考过程，可以修改这里的逻辑
+	}
+
+	return &response
+}
+
+// 超时配置获取方法
+func (p *AliCloudProvider) getThinkingTimeout() int {
+	if p.config.ThinkingTimeout > 0 {
+		return p.config.ThinkingTimeout
+	}
+	return 300 // 默认5分钟
+}
+
+func (p *AliCloudProvider) getOutputTimeout() int {
+	if p.config.OutputTimeout > 0 {
+		return p.config.OutputTimeout
+	}
+	return 60 // 默认1分钟
+}
+
+func (p *AliCloudProvider) getReadTimeout() int {
+	if p.config.ReadTimeout > 0 {
+		return p.config.ReadTimeout
+	}
+	return 30 // 默认30秒
 }
 
 // CreateChatCompletionStream 实现Provider接口
@@ -184,7 +460,53 @@ func (p *AliCloudProvider) doOpenAIRequest(ctx context.Context, req *types.ChatC
 
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
-		return nil, fmt.Errorf("alicloud: HTTP %d", resp.StatusCode)
+
+		// 尝试读取错误响应体中的详细信息
+		errorBody, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return nil, fmt.Errorf("alicloud: HTTP %d (failed to read error response: %v)", resp.StatusCode, readErr)
+		}
+
+		// 尝试解析错误响应为JSON格式
+		var errorResp map[string]interface{}
+		if parseErr := json.Unmarshal(errorBody, &errorResp); parseErr == nil {
+			// 如果成功解析为JSON，尝试提取错误信息
+			if errorObj, exists := errorResp["error"]; exists {
+				if errorMap, ok := errorObj.(map[string]interface{}); ok {
+					// 构建详细的错误信息
+					var errorMsg string
+					if message, exists := errorMap["message"]; exists {
+						errorMsg = fmt.Sprintf("%v", message)
+					}
+					if code, exists := errorMap["code"]; exists {
+						if errorMsg != "" {
+							errorMsg = fmt.Sprintf("%s (code: %v)", errorMsg, code)
+						} else {
+							errorMsg = fmt.Sprintf("code: %v", code)
+						}
+					}
+					if errorType, exists := errorMap["type"]; exists {
+						if errorMsg != "" {
+							errorMsg = fmt.Sprintf("%s, type: %v", errorMsg, errorType)
+						} else {
+							errorMsg = fmt.Sprintf("type: %v", errorType)
+						}
+					}
+
+					// 如果有request_id，也包含进去
+					if requestId, exists := errorResp["request_id"]; exists {
+						errorMsg = fmt.Sprintf("%s, request_id: %v", errorMsg, requestId)
+					}
+
+					if errorMsg != "" {
+						return nil, fmt.Errorf("alicloud: HTTP %d - %s", resp.StatusCode, errorMsg)
+					}
+				}
+			}
+		}
+
+		// 如果无法解析JSON或没有标准错误结构，返回原始响应体
+		return nil, fmt.Errorf("alicloud: HTTP %d - %s", resp.StatusCode, string(errorBody))
 	}
 
 	return resp.Body, nil
