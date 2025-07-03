@@ -1,5 +1,136 @@
 # 历史版本说明
 
+## v0.1.1 (2025-07-03)
+
+### 🔧 重要修复 & 优化
+
+#### 🚨 阿里云思考模式修复
+- 🔄 **思考模式兼容性**: 修复了非流式调用下思考模式的参数冲突问题
+- 📊 **智能处理**: 当开启思考模式时，自动使用流式调用然后聚合结果
+- 🛡️ **错误处理**: 改进了HTTP错误响应的处理，现在显示详细的错误信息
+- ⚙️ **向后兼容**: 保持所有现有功能完全兼容
+
+#### 🔧 流式工具调用核心修复
+- 📝 **Delta结构修复**: 修复了`response.Delta`结构体缺少`ToolCalls`字段的编译错误
+- 🔄 **流式JSON解析**: 解决了流式响应中JSON参数分块传输导致的解析失败问题
+- 🛡️ **安全解析**: 新增`ParseToolCallArgumentsSafe`函数，支持不完整JSON的安全处理
+- 🚫 **防过早退出**: 添加`HasPendingToolCalls()`方法防止流在工具调用完成前提前结束
+
+#### ⚡ 流式工具调用累积器
+- 📊 **状态管理**: 新增`StreamingToolCallAccumulator`用于管理流式工具调用状态
+- 🔄 **自动累积**: 自动处理分多个chunk传输的JSON参数
+- 📈 **进度监控**: 支持实时监控待完成工具调用的数量和状态
+- 🧹 **内存优化**: 及时清理已完成的工具调用，优化内存使用
+
+#### 🕐 阿里云思考模式超时优化
+- 🎯 **分阶段超时**: 实现思考阶段、输出阶段和读取阶段的独立超时控制
+- 🔄 **智能恢复**: 超时时尝试返回部分结果而不是完全失败
+- 📊 **性能提升**: 使用8KB缓冲区和非阻塞读取提高处理效率
+- ⚙️ **灵活配置**: 支持自定义`ThinkingTimeout`、`OutputTimeout`和`ReadTimeout`
+
+### ✨ 新增功能
+
+#### 🔧 增强的工具调用API
+- `ParseToolCallArgumentsSafe[T]()` - 安全的参数解析，支持流式JSON
+- `IsValidJSON()` - JSON有效性检测函数
+- `HasPendingToolCalls()` - 检查是否有待完成的工具调用
+- `GetPendingCount()` - 获取待完成工具调用数量
+- `GetCompletedCount()` - 获取已完成工具调用数量
+- `FinalizeStream()` - 流结束时的强制完成检查
+
+#### 🎯 调试与监控
+- `GetPendingToolCallsDebugInfo()` - 详细的调试信息输出
+- `ForceCompleteToolCall()` - 强制完成指定工具调用
+- 详细的状态追踪和时间戳记录
+- 完善的错误信息和建议
+
+### 🛠️ 技术改进
+
+#### 🔒 并发安全
+- 所有累积器操作都使用读写锁保护
+- 线程安全的状态管理和数据处理
+- 防止竞态条件的设计
+
+#### 📊 性能优化
+- 智能的JSON检测避免不必要的解析尝试
+- 8KB缓冲区提高网络读取效率
+- 及时清理完成的工具调用释放内存
+
+#### 🧪 测试覆盖
+- 新增流式工具调用集成测试
+- 多工具调用并发处理测试
+- 思考模式超时处理测试
+- JSON解析安全性测试
+
+### 🚀 使用方式
+
+#### 安全的工具调用参数解析
+```go
+// 替换原有的ParseToolCallArguments
+params, isComplete, err := tools.ParseToolCallArgumentsSafe[MyParams](toolCall)
+if !isComplete {
+    return "", fmt.Errorf("参数不完整，继续等待")
+}
+```
+
+#### 流式工具调用处理
+```go
+accumulator := tools.NewStreamingToolCallAccumulator()
+// 处理Delta
+accumulator.ProcessDelta(choice.Delta.ToolCalls)
+// 防止过早退出
+if choice.FinishReason != "" && accumulator.HasPendingToolCalls() {
+    continue // 继续等待工具调用完成
+}
+```
+
+#### 自定义阿里云思考模式超时
+```go
+config := &alicloud.AliCloudConfig{
+    APIKey:          "your-api-key",
+    ThinkingTimeout: 300, // 思考5分钟
+    OutputTimeout:   60,  // 输出等待1分钟
+    ReadTimeout:     30,  // 读取30秒
+}
+```
+
+### 🐛 Bug修复
+
+- 修复了阿里云思考模式参数冲突导致的调用失败
+- 修复了流式工具调用中JSON参数解析失败的问题
+- 修复了Delta结构体缺少ToolCalls字段的编译错误
+- 修复了流式响应过早退出导致工具调用丢失的问题
+- 修复了思考模式下的超时处理不当问题
+
+### 📄 新增文档
+
+- [`docs/thinking_mode_fix.md`](docs/thinking_mode_fix.md) - 阿里云思考模式修复说明
+- [`docs/流式JSON解析修复总结.md`](docs/流式JSON解析修复总结.md) - 流式JSON解析修复总结
+- [`docs/流式工具调用修复说明.md`](docs/流式工具调用修复说明.md) - 流式工具调用修复说明
+- [`docs/timeout_optimization.md`](docs/timeout_optimization.md) - 阿里云思考模式超时优化指南
+- [`docs/流式工具调用最佳实践.md`](docs/流式工具调用最佳实践.md) - 流式工具调用最佳实践
+- [`docs/防止过早退出示例.md`](docs/防止过早退出示例.md) - 防止过早退出示例
+
+### 🔗 兼容性
+
+- ✅ 完全向后兼容 v0.1.0 的所有功能
+- ✅ 保留原有的`ParseToolCallArguments`函数
+- ✅ 所有现有代码无需修改即可使用
+- ✅ 新功能为可选升级，不影响现有流程
+
+### 💡 升级建议
+
+1. **立即升级**: 流式工具调用用户建议立即升级以获得稳定性修复
+2. **安全解析**: 在流式工具调用中使用`ParseToolCallArgumentsSafe`替代原函数
+3. **防过早退出**: 在检查`FinishReason`时添加`HasPendingToolCalls()`检查
+4. **超时配置**: 根据实际场景调整思考模式的超时参数
+
+---
+
+*此版本主要关注稳定性和可靠性改进，特别是流式工具调用的完整性和错误处理能力的提升。*
+
+
+
 ## v0.1.0 (2025-07-01)
 
 ### 🎉 首次发布
