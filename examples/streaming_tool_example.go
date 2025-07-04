@@ -156,9 +156,9 @@ func main() {
 	syncToolCall := types.ToolCall{
 		ID:   "test-1",
 		Type: "function",
-		Function: types.ToolFunction{
-			Name:       "sync_calc",
-			Parameters: `{"a": 10, "b": 20}`,
+		Function: types.ResponseToolFunction{
+			Name:      "sync_calc",
+			Arguments: `{"a": 10, "b": 20}`,
 		},
 	}
 
@@ -173,9 +173,9 @@ func main() {
 	streamToolCall := types.ToolCall{
 		ID:   "test-2",
 		Type: "function",
-		Function: types.ToolFunction{
-			Name:       "stream_writer",
-			Parameters: `{"text": "Hello流式输出!"}`,
+		Function: types.ResponseToolFunction{
+			Name:      "stream_writer",
+			Arguments: `{"text": "Hello流式输出!"}`,
 		},
 	}
 
@@ -201,9 +201,9 @@ func main() {
 	unifiedToolCall := types.ToolCall{
 		ID:   "test-3",
 		Type: "function",
-		Function: types.ToolFunction{
-			Name:       "unified_processor",
-			Parameters: `{"message": "测试消息"}`,
+		Function: types.ResponseToolFunction{
+			Name:      "unified_processor",
+			Arguments: `{"message": "测试消息"}`,
 		},
 	}
 

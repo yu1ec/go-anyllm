@@ -179,7 +179,7 @@ func (tb *ToolBuilder) Build() *request.Tool {
 func (tb *ToolBuilder) BuildForTypes() types.Tool {
 	return types.Tool{
 		Type: tb.tool.Type,
-		Function: types.ToolFunction{
+		Function: types.RequestToolFunction{
 			Name:        tb.tool.Function.Name,
 			Description: tb.tool.Function.Description,
 			Parameters:  tb.tool.Function.Parameters,
@@ -431,7 +431,7 @@ func ParseToolCallArguments[T any](toolCall types.ToolCall) (T, error) {
 	var result T
 
 	// 尝试解析Parameters字段
-	switch params := toolCall.Function.Parameters.(type) {
+	switch params := toolCall.Function.Arguments.(type) {
 	case string:
 		// 如果是字符串，尝试JSON解析
 		if err := json.Unmarshal([]byte(params), &result); err != nil {
@@ -461,7 +461,7 @@ func ParseToolCallArgumentsSafe[T any](toolCall types.ToolCall) (T, bool, error)
 	var result T
 
 	// 尝试解析Parameters字段
-	switch params := toolCall.Function.Parameters.(type) {
+	switch params := toolCall.Function.Arguments.(type) {
 	case string:
 		// 检查JSON是否完整
 		if !IsValidJSON(params) {
@@ -600,9 +600,9 @@ func (acc *StreamingToolCallAccumulator) GetCompletedToolCalls() []types.ToolCal
 			completed = append(completed, types.ToolCall{
 				ID:   streamingCall.ID,
 				Type: streamingCall.Type,
-				Function: types.ToolFunction{
-					Name:       streamingCall.FunctionName,
-					Parameters: streamingCall.ArgumentsBuffer.String(),
+				Function: types.ResponseToolFunction{
+					Name:      streamingCall.FunctionName,
+					Arguments: streamingCall.ArgumentsBuffer.String(),
 				},
 			})
 		}
@@ -710,9 +710,9 @@ func (acc *StreamingToolCallAccumulator) FinalizeStream() []types.ToolCall {
 			completed = append(completed, types.ToolCall{
 				ID:   streamingCall.ID,
 				Type: streamingCall.Type,
-				Function: types.ToolFunction{
-					Name:       streamingCall.FunctionName,
-					Parameters: streamingCall.ArgumentsBuffer.String(),
+				Function: types.ResponseToolFunction{
+					Name:      streamingCall.FunctionName,
+					Arguments: streamingCall.ArgumentsBuffer.String(),
 				},
 			})
 		}
@@ -740,9 +740,9 @@ func (acc *StreamingToolCallAccumulator) ForceCompleteToolCall(toolCallId string
 	toolCall := &types.ToolCall{
 		ID:   streamingCall.ID,
 		Type: streamingCall.Type,
-		Function: types.ToolFunction{
-			Name:       streamingCall.FunctionName,
-			Parameters: streamingCall.ArgumentsBuffer.String(),
+		Function: types.ResponseToolFunction{
+			Name:      streamingCall.FunctionName,
+			Arguments: streamingCall.ArgumentsBuffer.String(),
 		},
 	}
 

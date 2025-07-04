@@ -178,7 +178,7 @@ func main() {
 				fmt.Printf("\n工具调用 %d:\n", i+1)
 				fmt.Printf("  ID: %s\n", toolCall.ID)
 				fmt.Printf("  函数: %s\n", toolCall.Function.Name)
-				fmt.Printf("  参数: %v\n", toolCall.Function.Parameters)
+				fmt.Printf("  参数: %v\n", toolCall.Function.Arguments)
 
 				// 使用注册表处理工具调用
 				result := registry.Handle(toolCall)

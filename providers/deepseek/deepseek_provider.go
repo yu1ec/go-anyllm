@@ -310,9 +310,9 @@ func (p *DeepSeekProvider) convertToOpenAIResponse(resp *response.ChatCompletion
 					openaiChoice.Message.ToolCalls = append(openaiChoice.Message.ToolCalls, types.ToolCall{
 						ID:   tc.Id,
 						Type: tc.Type,
-						Function: types.ToolFunction{
-							Name:       tc.Function.Name,
-							Parameters: tc.Function.Arguments,
+						Function: types.ResponseToolFunction{
+							Name:      tc.Function.Name,
+							Arguments: tc.Function.Arguments,
 						},
 					})
 				}
@@ -332,9 +332,9 @@ func (p *DeepSeekProvider) convertToOpenAIResponse(resp *response.ChatCompletion
 					openaiChoice.Delta.ToolCalls = append(openaiChoice.Delta.ToolCalls, types.ToolCall{
 						ID:   tc.Id,
 						Type: tc.Type,
-						Function: types.ToolFunction{
-							Name:       tc.Function.Name,
-							Parameters: tc.Function.Arguments,
+						Function: types.ResponseToolFunction{
+							Name:      tc.Function.Name,
+							Arguments: tc.Function.Arguments,
 						},
 					})
 				}

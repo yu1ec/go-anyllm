@@ -106,22 +106,29 @@ type StreamOptions struct {
 
 // Tool 工具定义
 type Tool struct {
-	Type     string       `json:"type"`
-	Function ToolFunction `json:"function"`
+	Type     string              `json:"type"`
+	Function RequestToolFunction `json:"function"`
 }
 
-// ToolFunction 工具函数
-type ToolFunction struct {
+// RequestToolFunction 请求中的工具函数定义
+type RequestToolFunction struct {
 	Name        string      `json:"name"`
 	Description string      `json:"description,omitempty"`
 	Parameters  interface{} `json:"parameters,omitempty"`
 }
 
+// ResponseToolFunction 响应中的工具函数调用
+type ResponseToolFunction struct {
+	Name        string      `json:"name"`
+	Description string      `json:"description,omitempty"`
+	Arguments   interface{} `json:"arguments,omitempty"`
+}
+
 // ToolCall 工具调用
 type ToolCall struct {
-	ID       string       `json:"id"`
-	Type     string       `json:"type"`
-	Function ToolFunction `json:"function"`
+	ID       string               `json:"id"`
+	Type     string               `json:"type"`
+	Function ResponseToolFunction `json:"function"`
 }
 
 // LogprobsContent 日志概率内容

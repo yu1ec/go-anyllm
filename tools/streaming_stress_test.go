@@ -273,9 +273,9 @@ func TestStreamingToolCallsEdgeCases(t *testing.T) {
 		t.Errorf("重复ID应该累积成一个完整的工具调用，实际有 %d 个", len(completed))
 	}
 
-	if len(completed) > 0 && completed[0].Function.Parameters != `{"param1": "value1"}` {
+	if len(completed) > 0 && completed[0].Function.Arguments != `{"param1": "value1"}` {
 		t.Errorf("累积的参数不正确，期望 %s，实际 %s",
-			`{"param1": "value1"}`, completed[0].Function.Parameters)
+			`{"param1": "value1"}`, completed[0].Function.Arguments)
 	}
 
 	// 清理
@@ -311,7 +311,7 @@ func TestStreamingToolCallsTimeout(t *testing.T) {
 		t.Error("强制完成应该返回工具调用对象")
 	}
 
-	if forcedCall.Function.Parameters != `{"incomplete":` {
+	if forcedCall.Function.Arguments != `{"incomplete":` {
 		t.Error("强制完成的工具调用参数不正确")
 	}
 

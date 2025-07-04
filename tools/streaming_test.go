@@ -52,9 +52,9 @@ func TestParseToolCallArgumentsSafe(t *testing.T) {
 			toolCall: types.ToolCall{
 				ID:   "call_1",
 				Type: "function",
-				Function: types.ToolFunction{
-					Name:       "get_weather",
-					Parameters: `{"location": "北京", "unit": "celsius"}`,
+				Function: types.ResponseToolFunction{
+					Name:      "get_weather",
+					Arguments: `{"locationq": "北京", "unit": "celsius"}`,
 				},
 			},
 			expectedParams: TestParams{Location: "北京", Unit: "celsius"},
@@ -66,9 +66,9 @@ func TestParseToolCallArgumentsSafe(t *testing.T) {
 			toolCall: types.ToolCall{
 				ID:   "call_2",
 				Type: "function",
-				Function: types.ToolFunction{
-					Name:       "get_weather",
-					Parameters: `{"location": "北京"`,
+				Function: types.ResponseToolFunction{
+					Name:      "get_weather",
+					Arguments: `{"location": "北京"`,
 				},
 			},
 			expectedParams: TestParams{},
@@ -80,9 +80,9 @@ func TestParseToolCallArgumentsSafe(t *testing.T) {
 			toolCall: types.ToolCall{
 				ID:   "call_3",
 				Type: "function",
-				Function: types.ToolFunction{
-					Name:       "get_weather",
-					Parameters: "",
+				Function: types.ResponseToolFunction{
+					Name:      "get_weather",
+					Arguments: "",
 				},
 			},
 			expectedParams: TestParams{},
@@ -181,8 +181,8 @@ func TestStreamingToolCallAccumulator(t *testing.T) {
 			t.Errorf("期望函数名为 'get_weather', 得到 '%s'", call.Function.Name)
 		}
 		expectedParams := `{"location": "北京", "unit": "celsius"}`
-		if call.Function.Parameters != expectedParams {
-			t.Errorf("期望参数为 %s, 得到 %s", expectedParams, call.Function.Parameters)
+		if call.Function.Arguments != expectedParams {
+			t.Errorf("期望参数为 %s, 得到 %s", expectedParams, call.Function.Arguments)
 		}
 	}
 }
@@ -259,8 +259,8 @@ func TestStreamingToolCallAccumulatorMultiple(t *testing.T) {
 
 	if call, exists := callMap["call_1"]; exists {
 		expectedParams := `{"location": "北京"}`
-		if call.Function.Parameters != expectedParams {
-			t.Errorf("call_1 期望参数 %s, 得到 %s", expectedParams, call.Function.Parameters)
+		if call.Function.Arguments != expectedParams {
+			t.Errorf("call_1 期望参数 %s, 得到 %s", expectedParams, call.Function.Arguments)
 		}
 	} else {
 		t.Errorf("缺少 call_1")
@@ -268,8 +268,8 @@ func TestStreamingToolCallAccumulatorMultiple(t *testing.T) {
 
 	if call, exists := callMap["call_2"]; exists {
 		expectedParams := `{"expression": "2+3"}`
-		if call.Function.Parameters != expectedParams {
-			t.Errorf("call_2 期望参数 %s, 得到 %s", expectedParams, call.Function.Parameters)
+		if call.Function.Arguments != expectedParams {
+			t.Errorf("call_2 期望参数 %s, 得到 %s", expectedParams, call.Function.Arguments)
 		}
 	} else {
 		t.Errorf("缺少 call_2")
