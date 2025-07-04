@@ -1,4 +1,122 @@
 # 历史版本说明
+## v0.1.2 (2025-07-04)
+### 🔧 重要修复 & 优化
+
+#### 🎯 类型系统优化
+- 🔧 **工具函数类型分离**: 将 `ToolFunction` 分离为 `RequestToolFunction` 和 `ResponseToolFunction`
+- 📝 **语义明确化**: 请求中使用 `Parameters` 字段，响应中使用 `Arguments` 字段
+- 🛡️ **类型安全**: 增强了工具调用的类型安全性和可读性
+- ✨ **向后兼容**: 保持所有现有API的完全兼容性
+
+#### 🖼️ 多模态（视觉）功能支持
+- 🌟 **阿里云视觉模型**: 支持 `qwen-vl-max-latest` 和 `qwen-vl-plus-latest` 模型
+- 📷 **图像格式支持**: 支持 PNG、JPEG、WEBP 格式的图像处理
+- 🔄 **流式多模态**: 多模态消息同样支持流式处理
+- 📱 **灵活API设计**: 提供多种创建多模态消息的方式
+- 🎨 **图像详细度控制**: 支持 low、high、auto 三种图像处理精度
+
+### ✨ 新增功能
+
+#### 🖼️ 多模态消息支持
+- `NewTextMessage()` - 创建纯文本消息（向后兼容）
+- `NewMultiModalMessage()` - 创建包含文本和图像的混合消息
+- `NewTextContent()` - 创建文本内容项
+- `NewImageContent()` - 创建图像内容项，支持详细度设置
+- `GetContentAsString()` - 获取消息的文本表示
+- `IsMultiModal()` - 检查消息是否包含多模态内容
+- `GetImageContents()` - 提取消息中的所有图像内容
+
+#### 🎯 图像处理增强
+- **Base64编码支持**: `data:image/png;base64,{data}` 格式
+- **详细度控制**: `ImageDetailLow`、`ImageDetailHigh`、`ImageDetailAuto` 常量
+- **类型安全**: 完整的多模态类型定义和验证
+- **示例代码**: 完整的多模态使用示例和文档
+
+#### 🔧 工具系统优化
+- **类型分离**: `RequestToolFunction` 用于请求，`ResponseToolFunction` 用于响应
+- **字段语义**: 明确区分 `Parameters`（请求）和 `Arguments`（响应）
+- **构建器增强**: `BuildForTypes()` 方法支持新的类型系统
+
+### 🛠️ 技术改进
+
+#### 📊 示例代码修复
+- 修复了工具调用示例中的类型错误
+- 更新了流式工具调用示例的字段引用
+- 统一了所有示例代码的类型使用
+- 增加了多模态功能的完整示例
+
+#### 🔒 类型安全增强
+- 更清晰的工具函数类型定义
+- 减少了类型转换时的歧义
+- 增强了编译时的类型检查
+- 提供了更好的IDE支持和自动补全
+
+#### 📈 向后兼容性
+- 所有现有API保持完全兼容
+- 渐进式类型系统升级
+- 平滑的迁移路径
+- 无破坏性变更
+
+### 🚀 使用方式
+
+#### 多模态消息创建
+```go
+// 方式一：直接构造
+contents := []types.MessageContent{
+    types.NewImageContent("data:image/png;base64," + base64Image, types.ImageDetailAuto),
+    types.NewTextContent("请分析这张图片的内容。"),
+}
+
+// 方式二：使用辅助函数
+req := &types.ChatCompletionRequest{
+    Model: "qwen-vl-max-latest",
+    Messages: []types.ChatCompletionMessage{
+        types.NewTextMessage(types.RoleSystem, "You are a helpful assistant."),
+        types.NewMultiModalMessage(types.RoleUser, contents),
+    },
+}
+```
+
+#### 图像文件处理
+```go
+// 从文件加载并转换为base64
+base64Image, err := imageFileToBase64("path/to/image.png")
+content := types.NewImageContent(
+    fmt.Sprintf("data:image/png;base64,%s", base64Image),
+    types.ImageDetailAuto,
+)
+```
+
+#### 类型安全的工具构建
+```go
+// 使用新的类型系统
+tool := tools.NewTool("analyze_image", "分析图像内容").
+    AddStringParam("description", "图像描述", true).
+    BuildForTypes()  // 返回 types.Tool 类型
+```
+
+### 🐛 Bug修复
+
+- 修复了工具调用示例中 `Parameters` 和 `Arguments` 字段的混用问题
+- 修复了流式工具调用测试中的类型不匹配错误
+- 统一了工具函数类型的使用规范
+- 修复了示例代码中的编译错误
+
+### 📄 新增文档
+
+- [`docs/多模态（视觉）功能使用指南.md`](docs/多模态（视觉）功能使用指南.md) - 多模态功能完整使用指南
+- [`docs/流式工具调用使用指南.md`](docs/流式工具调用使用指南.md) - 流式工具调用使用指南
+- [`examples/multimodal_demo/main.go`](examples/multimodal_demo/main.go) - 多模态功能示例代码
+- 完善的API文档和类型定义说明
+
+### 🔗 兼容性
+
+- v0.1.1 和 v0.1.0 对于方法参数调用上不兼容
+- 现有的纯文本API继续正常工作
+- 工具调用API保持完全兼容
+- 渐进式类型系统升级，无破坏性变更
+- 所有现有代码无需修改即可使用
+
 
 ## v0.1.1 (2025-07-03)
 
